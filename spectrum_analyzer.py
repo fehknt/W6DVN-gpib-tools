@@ -185,7 +185,9 @@ def main():
             
         carrier_peaks, spurious_peaks = analysis.separate_carrier_and_spurious(peaks, carrier_freq)
         print_peak_report(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs)
-        analysis.append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs)
+        
+        note = input("Enter a note for this measurement: ")
+        analysis.append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs, note)
 
     except visa.errors.VisaIOError as e:
         print(f"Error communicating with instrument: {e}")

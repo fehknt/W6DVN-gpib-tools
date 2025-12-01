@@ -126,7 +126,7 @@ def get_next_measurement_index(filename='peak_report.csv'):
 
     return max_index + 1
 
-def append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs, filename='peak_report.csv', measurement_index=None, timestamp=None):
+def append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs, note, filename='peak_report.csv', measurement_index=None, timestamp=None):
     """Appends a list of carrier and spurious peaks to a CSV file."""
     if measurement_index is None:
         measurement_index = get_next_measurement_index(filename)
@@ -135,7 +135,8 @@ def append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs, fil
     
     fieldnames = [
         'measurement_index', 'timestamp', 'peak_type', 
-        'frequency_hz', 'measured_power_dbm', 'compensation_db', 'corrected_power_dbm'
+        'frequency_hz', 'measured_power_dbm', 'compensation_db', 'corrected_power_dbm',
+        'note'
     ]
     
     rows_to_write = []
@@ -146,7 +147,8 @@ def append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs, fil
         rows_to_write.append({
             'measurement_index': measurement_index, 'timestamp': timestamp, 'peak_type': 'carrier',
             'frequency_hz': freq, 'measured_power_dbm': power,
-            'compensation_db': comp_db, 'corrected_power_dbm': corrected_power
+            'compensation_db': comp_db, 'corrected_power_dbm': corrected_power,
+            'note': note
         })
 
     for freq, power in spurious_peaks:
@@ -155,7 +157,8 @@ def append_peaks_to_csv(carrier_peaks, spurious_peaks, comp_freqs, comp_dbs, fil
         rows_to_write.append({
             'measurement_index': measurement_index, 'timestamp': timestamp, 'peak_type': 'spurious',
             'frequency_hz': freq, 'measured_power_dbm': power,
-            'compensation_db': comp_db, 'corrected_power_dbm': corrected_power
+            'compensation_db': comp_db, 'corrected_power_dbm': corrected_power,
+            'note': note
         })
 
     if not rows_to_write:

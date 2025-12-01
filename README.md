@@ -12,7 +12,7 @@ To use:
 
 This should produce a report on the command line as well as an output file called peak_report.csv with the info for further analysis. 
 Each run will append to the report with a new measurement index, so you should be fine to run it multiple times for different devices as long as you keep track of what the measurement indices mean.
-The timestamps on the runs might help if you totally forgot what the mean.
+Leave yourself a note when prompted about the measurement!
 
 If you are using an external attenuator or RF tap, add a file called 'ext_att_compensation.csv' with lines containing freq (Hz), dB pairs.
 The program will use linear interpolation, so if you just enter one value it will assume a flat attenuator.
