@@ -140,6 +140,8 @@ def main():
         print(f"\nAn error occurred: {e}")
     finally:
         if sa:
+            print("\nTurning off tracking generator.")
+            sa.turn_off_tracking_generator()
             sa.close()
         print("\nConnection closed.")
 

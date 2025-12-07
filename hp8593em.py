@@ -71,6 +71,10 @@ class HP8593EM:
     def set_reference_level(self, level_dbm):
         self.write(f"RL {level_dbm}DBM")
 
+    def turn_off_tracking_generator(self):
+        """Turns off the tracking generator."""
+        self.write("SRCPWR OFF")
+
     def set_tracking_generator_power(self, power_dbm):
         self.write(f"SRCPWR {power_dbm}DB")
 
