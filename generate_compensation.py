@@ -107,7 +107,7 @@ def main():
                 raw_data = sa.get_trace_data(1)
                 raw_points = [float(p) for p in raw_data.strip().split('\r')]
                 
-                attenuations = [80 - (p / 100) for p in raw_points]
+                attenuations = [(p / 100) - 80 for p in raw_points]
                 
                 num_points = len(attenuations)
                 frequencies = np.linspace(actual_start_freq, actual_end_freq, num_points)
