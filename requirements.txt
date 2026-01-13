@@ -6,3 +6,5 @@ pytest-mock
 pyvisa-sim
 matplotlib
 pandas
+pyqtgraph
+PyQt5
