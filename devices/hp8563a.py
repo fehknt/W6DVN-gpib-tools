@@ -44,6 +44,9 @@ class HP8563A:
         self.write("AT AUTO")
         self.write("AUNITS DBM")
 
+    def set_preset_mode(self):
+        self.write(f"IP")
+
     def set_single_sweep_mode(self):
         self.write(f"SNGLS")
 
@@ -99,6 +102,9 @@ class HP8563A:
     def get_sweep_time(self):
         """Queries the instrument for its sweep time."""
         return float(self.query("ST?"))
+
+    def set_sweep_time(self, sweep_time):
+        self.write(f"ST {sweep_time}")
 
     def get_trace_data(self, trace_num):
         return self.query(f"TA?")
