@@ -20,7 +20,7 @@ class HP8673B:
         return self.resource.query(f"CW?")
 
     def set_power(self, power_dbm):
-        self.resource.write(f"PL {float(power_dbm):.2f} DB")
+        self.resource.write(f"PL{int(power_dbm)}DB")
 
     def enable_rf(self, enabled: bool):
         if enabled:
