@@ -5,9 +5,9 @@ import sys
 import time
 from datetime import datetime
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QWidget, QPlainTextEdit, QComboBox, QLineEdit, QSizePolicy, QFrame, QCheckBox, QAction, QMessageBox
-from hp8593em import HP8593EM
+from devices.hp8593em import HP8593EM
 from devices.hp8563a import HP8563A
-from hp8673b import HP8673B
+from devices.hp8673b import HP8673B
 from visa_utils import discover_and_connect
 
 class MainWindow(QMainWindow):

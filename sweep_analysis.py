@@ -2,8 +2,8 @@ import pyvisa
 import numpy as np
 import matplotlib.pyplot as plt
 import csv
-from hp8593em import HP8593EM
-from hp8673b import HP8673B
+from devices.hp8593em import HP8593EM
+from devices.hp8673b import HP8673B
 from visa_utils import discover_and_connect
 
 def parse_frequency(freq_str: str) -> float:

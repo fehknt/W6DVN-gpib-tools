@@ -2,7 +2,7 @@ import numpy as np
 import pyvisa as visa
 import time
 import analysis
-from hp8593em import HP8593EM
+from devices.hp8593em import HP8593EM
 import pandas as pd
 import os
 

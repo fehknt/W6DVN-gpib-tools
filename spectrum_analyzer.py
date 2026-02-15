@@ -1,4 +1,4 @@
-from hp8593em import HP8593EM
+from devices.hp8593em import HP8593EM
 import pyvisa as visa
 import time
 import analysis

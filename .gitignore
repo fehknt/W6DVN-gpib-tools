@@ -1,3 +1,4 @@
 /peak_report.csv
 /ext_att_compensation.csv
 __pycache__/*
+pyvisa-scratchpad.py
