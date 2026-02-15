@@ -8,6 +8,7 @@ import sys
 import time
 from datetime import datetime
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QWidget, QPlainTextEdit, QComboBox, QLineEdit, QSizePolicy, QFrame, QCheckBox, QAction, QMessageBox
+from PyQt5.QtCore import QThread, QObject, pyqtSignal
 from devices.hp8593em import HP8593EM
 from devices.hp8563a import HP8563A
 from device_factory import create_spectrum_analyzer
@@ -15,6 +16,55 @@ from devices.hp8673b import HP8673B
 from sweep_utils import parse_frequency, run_sweep, halton
 
 CONFIG_FILE = "config.json"
+
+
+class SweepWorker(QObject):
+    finished = pyqtSignal()
+    progress = pyqtSignal(float, float)
+    error = pyqtSignal(str)
+    log = pyqtSignal(str)
+
+    def __init__(self, sa, sg, frequencies, sg_tracking_disabled, sa_freq_offset, power, rbw):
+        super().__init__()
+        self.sa = sa
+        self.sg = sg
+        self.frequencies = frequencies
+        self.sg_tracking_disabled = sg_tracking_disabled
+        self.sa_freq_offset = sa_freq_offset
+        self.power = power
+        self.rbw = rbw
+        self._is_cancelled = False
+
+    def run(self):
+        try:
+            self.log.emit("Configuring devices for sweep...")
+            self.sa.set_single_sweep_mode()
+            self.sa.set_resolution_bandwidth(self.rbw)
+            self.sa.set_zero_span()
+            self.sg.set_power(self.power)
+            self.sg.enable_rf(True)
+
+            sweep_generator = run_sweep(self.sa, self.sg, self.frequencies,
+                                        sg_tracking_disabled=self.sg_tracking_disabled,
+                                        sa_freq_offset=self.sa_freq_offset,
+                                        log_callback=self.log.emit)
+
+            for freq, power in sweep_generator:
+                if self._is_cancelled:
+                    self.log.emit("Sweep cancellation requested.")
+                    break
+                self.progress.emit(freq, power)
+
+        except Exception as e:
+            self.error.emit(f"Error running sweep: {e}")
+        finally:
+            if self.sg:
+                self.sg.enable_rf(False)
+            self.log.emit("Sweep finished.")
+            self.finished.emit()
+
+    def stop(self):
+        self._is_cancelled = True
 
 
 class MainWindow(QMainWindow):
@@ -207,16 +257,16 @@ class MainWindow(QMainWindow):
 
         # Create a layout for the sweep buttons
         sweep_button_layout = QHBoxLayout()
-        self.btnRunNewSweep = QPushButton("Run New Sweep", self)
-        self.btnRunNewSweep.clicked.connect(self.run_new_sweep)
-        sweep_button_layout.addWidget(self.btnRunNewSweep)
+        self.btnRunSweep = QPushButton("Run New Sweep", self)
+        self.btnRunSweep.clicked.connect(self.handle_sweep_button_click)
+        sweep_button_layout.addWidget(self.btnRunSweep)
 
         self.btnAppendSweep = QPushButton("Append Sweep", self)
-        self.btnAppendSweep.clicked.connect(self.append_sweep)
+        self.btnAppendSweep.clicked.connect(self.handle_sweep_button_click)
         sweep_button_layout.addWidget(self.btnAppendSweep)
 
         self.btnAppendInterpolatedSweep = QPushButton("Append Interpolated Sweep", self)
-        self.btnAppendInterpolatedSweep.clicked.connect(self.append_interpolated_sweep)
+        self.btnAppendInterpolatedSweep.clicked.connect(self.handle_sweep_button_click)
         sweep_button_layout.addWidget(self.btnAppendInterpolatedSweep)
         
         vlayout.addLayout(sweep_button_layout)
@@ -235,7 +285,19 @@ class MainWindow(QMainWindow):
         self.last_sa_addr = None
         self.last_sg_addr = None
         self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
+        self.sweep_thread = None
+        self.sweep_worker = None
+        self.active_sweep_button = None
 
+        self.ui_elements_to_disable = [
+            self.cbSignalGenerator, self.cbSGAddr,
+            self.cbSpectrumAnalyzer, self.cbSAAddr,
+            self.btnDiscoverDevices, self.btnConnectDisconnect,
+            self.tbStartFreq, self.tbStopFreq, self.cbRBW,
+            self.tbPoints, self.tbSAFreqOffset, self.tbPower,
+            self.cbDisableTracking, self.tbSGFreq, self.btnSetSGFreq,
+            self.btnRunSweep, self.btnAppendSweep, self.btnAppendInterpolatedSweep
+        ]
 
         # Load previous settings and then run initial discovery
         self.load_config()
@@ -434,116 +496,163 @@ class MainWindow(QMainWindow):
         finally:
           self.btnConnectDisconnect.setText("Connect Devices")
   
-    def run_new_sweep(self):
-        if not self.sweep_data.empty:
-            reply = QMessageBox.question(self, 'Clear Data', 
-                                         "This will clear all existing sweep data. Are you sure?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No:
-                return # User cancelled
-
-        self.log("Starting new sweep and clearing existing data.")
-        self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
-        
-        start_freq = parse_frequency(self.tbStartFreq.text())
-        end_freq = parse_frequency(self.tbStopFreq.text())
-        
-        if self.tbPoints.text():
-            num_points = int(self.tbPoints.text())
-            frequencies = np.linspace(start_freq, end_freq, num_points)
-            self.log(f"Generating {num_points} linear points.")
-        else:
-            num_points = 1000  # Default for Halton
-            self.log(f"Generating {num_points} Halton points.")
-            frequencies = [start_freq + (end_freq - start_freq) * halton(i, 2) for i in range(1, num_points + 1)]
-            frequencies.insert(0, start_freq)
-            frequencies.append(end_freq)
-        
-        self._perform_sweep(frequencies)
-
-    def append_sweep(self):
-        self.log("Appending sweep with current settings.")
-        start_freq = parse_frequency(self.tbStartFreq.text())
-        end_freq = parse_frequency(self.tbStopFreq.text())
-        
-        if self.tbPoints.text():
-            num_points = int(self.tbPoints.text())
-            frequencies = np.linspace(start_freq, end_freq, num_points)
-            self.log(f"Generating {num_points} linear points for append.")
-        else:
-            num_points = 1000
-            self.log(f"Generating {num_points} Halton points for append.")
-            frequencies = [start_freq + (end_freq - start_freq) * halton(i, 2) for i in range(1, num_points + 1)]
-        
-        self._perform_sweep(frequencies)
-
-    def append_interpolated_sweep(self):
-        if self.sweep_data.empty or len(self.sweep_data['frequency'].unique()) < 2:
-            self.log("Not enough data to perform interpolated sweep. Run a new sweep first.")
+    def handle_sweep_button_click(self):
+        sender = self.sender()
+        if self.sweep_thread and self.sweep_thread.isRunning():
+            # The click must have come from the active cancel button
+            self.cancel_sweep()
             return
 
-        self.log("Performing interpolated sweep to fill gaps.")
-        num_points_to_add = int(self.tbPoints.text()) if self.tbPoints.text() else 41
-        
-        unique_freqs = sorted(self.sweep_data['frequency'].unique())
-        gaps = np.diff(unique_freqs)
-        
-        if len(gaps) == 0:
-            self.log("No frequency gaps found to interpolate.")
+        if not self.connected:
+            self.log("Cannot start sweep: Devices are not connected.")
             return
 
-        # Cap the number of points to the number of available gaps
-        actual_points_to_add = min(num_points_to_add, len(gaps))
-        self.log(f"Found {len(gaps)} gaps. Will add 1 point in each of the largest {actual_points_to_add} gaps.")
+        self.active_sweep_button = sender # Set the active button
+        frequencies = []
+        sweep_type = "sweep"
 
-        # Find the indices of the largest gaps
-        gap_indices = np.argsort(gaps)[::-1][:actual_points_to_add]
+        try:
+            if sender == self.btnRunSweep:
+                sweep_type = "new"
+                if not self.sweep_data.empty:
+                    reply = QMessageBox.question(self, 'Clear Data',
+                                                 "This will clear all existing sweep data. Are you sure?",
+                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply == QMessageBox.No:
+                        self.active_sweep_button = None # Reset if user cancels
+                        return
+                self.log("Starting new sweep and clearing existing data.")
+                self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
+                self.update_plot()
+                
+                start_freq = parse_frequency(self.tbStartFreq.text())
+                end_freq = parse_frequency(self.tbStopFreq.text())
+                num_points = int(self.tbPoints.text()) if self.tbPoints.text() else 41
+                frequencies = np.linspace(start_freq, end_freq, num_points)
 
-        new_frequencies = []
-        for i in gap_indices:
-            start_gap = unique_freqs[i]
-            end_gap = unique_freqs[i+1]
-            mid_point = start_gap + (end_gap - start_gap) / 2
-            new_frequencies.append(int(round(mid_point)))
+            elif sender == self.btnAppendSweep:
+                sweep_type = "append"
+                self.log("Appending sweep with current settings.")
+                start_freq = parse_frequency(self.tbStartFreq.text())
+                end_freq = parse_frequency(self.tbStopFreq.text())
+                num_points = int(self.tbPoints.text()) if self.tbPoints.text() else 41
+                frequencies = np.linspace(start_freq, end_freq, num_points)
 
-        if not new_frequencies:
-            self.log("No new frequencies generated for interpolation.")
+            elif sender == self.btnAppendInterpolatedSweep:
+                sweep_type = "interpolated"
+                if self.sweep_data.empty or len(self.sweep_data['frequency'].unique()) < 2:
+                    self.log("Not enough data to perform interpolated sweep. Run a new sweep first.")
+                    self.active_sweep_button = None # Reset
+                    return
+                self.log("Performing interpolated sweep to fill gaps.")
+                num_points_to_add = int(self.tbPoints.text()) if self.tbPoints.text() else 41
+                unique_freqs = sorted(self.sweep_data['frequency'].unique())
+                gaps = np.diff(unique_freqs)
+                if len(gaps) == 0:
+                    self.log("No frequency gaps found to interpolate.")
+                    self.active_sweep_button = None # Reset
+                    return
+                actual_points_to_add = min(num_points_to_add, len(gaps))
+                self.log(f"Found {len(gaps)} gaps. Will add 1 point in each of the largest {actual_points_to_add} gaps.")
+                gap_indices = np.argsort(gaps)[::-1][:actual_points_to_add]
+                for i in gap_indices:
+                    mid_point = unique_freqs[i] + (unique_freqs[i+1] - unique_freqs[i]) / 2
+                    frequencies.append(int(round(mid_point)))
+                if not frequencies:
+                    self.log("No new frequencies generated for interpolation.")
+                    self.active_sweep_button = None # Reset
+                    return
+        except Exception as e:
+            self.log(f"Invalid sweep parameter: {e}")
+            self.active_sweep_button = None # Reset
             return
-            
-        self.log(f"Adding {len(new_frequencies)} points in the largest frequency gaps.")
-        self._perform_sweep(new_frequencies)
-
-    def _perform_sweep(self, frequencies):
-      try:
-        self.log("Configuring Spectrum Analyzer for sweep...")
-        self.sa.set_single_sweep_mode()
-        rbw = parse_frequency(self.cbRBW.currentText())
-        self.sa.set_resolution_bandwidth(rbw)
-        self.sa.set_zero_span()
-
-        sgTrackingDisabled = self.cbDisableTracking.isChecked()
-        sa_freq_offset = int(self.tbSAFreqOffset.text())
         
-        self.sg.set_power(self.tbPower.text())
-        self.sg.enable_rf(True)
+        self._start_sweep_thread(frequencies, sweep_type)
 
-        new_data = []
-        sweep_generator = run_sweep(self.sa, self.sg, frequencies, 
-                                    sg_tracking_disabled=sgTrackingDisabled, 
-                                    sa_freq_offset=sa_freq_offset, 
-                                    log_callback=self.log)
+    def _start_sweep_thread(self, frequencies, sweep_type):
+        """Helper function to create and start the sweep worker thread."""
+        self.log(f"Starting {sweep_type} sweep with {len(frequencies)} points.")
+        
+        try:
+            rbw = parse_frequency(self.cbRBW.currentText())
+            power = self.tbPower.text()
+            sg_tracking_disabled = self.cbDisableTracking.isChecked()
+            sa_freq_offset = int(self.tbSAFreqOffset.text())
+        except Exception as e:
+            self.log(f"Invalid sweep parameter: {e}")
+            self.active_sweep_button = None # Reset
+            return
 
-        for freq, power in sweep_generator:
-            new_data.append({'frequency': freq, 'power': power})
+        self.set_ui_for_sweep(is_running=True)
 
-        self.sweep_data = pd.concat([self.sweep_data, pd.DataFrame(new_data)], ignore_index=True)
-        self.log("Sweep finished.")
+        self.sweep_thread = QThread()
+        self.sweep_worker = SweepWorker(self.sa, self.sg, frequencies, sg_tracking_disabled,
+                                        sa_freq_offset, power, rbw)
+        self.sweep_worker.moveToThread(self.sweep_thread)
+
+        self.sweep_thread.started.connect(self.sweep_worker.run)
+        self.sweep_worker.finished.connect(self.on_sweep_finished)
+        self.sweep_worker.progress.connect(self.update_sweep_progress)
+        self.sweep_worker.error.connect(self.log)
+        self.sweep_worker.log.connect(self.log)
+        
+        self.sweep_worker.finished.connect(self.sweep_thread.quit)
+        self.sweep_worker.finished.connect(self.sweep_worker.deleteLater)
+        self.sweep_thread.finished.connect(self.sweep_thread.deleteLater)
+        self.sweep_thread.finished.connect(self._on_thread_finished)
+
+        self.sweep_thread.start()
+
+    def cancel_sweep(self):
+        self.log("Attempting to cancel sweep...")
+        if self.sweep_worker:
+            self.sweep_worker.stop()
+
+    def on_sweep_finished(self):
+        """This slot is connected to the SweepWorker's finished signal."""
+        self.log("Sweep has finished or was cancelled. Cleaning up UI.")
+        self.set_ui_for_sweep(is_running=False)
         self.update_plot()
+    
+    def _on_thread_finished(self):
+        """This slot is connected to the QThread's finished signal."""
+        self.log("Sweep thread has finished.")
+        self.sweep_thread = None
+        self.sweep_worker = None
 
-      except Exception as e:
-        self.log(f"Error running sweep: {e}")
-      finally:
-        if self.sg: self.sg.enable_rf(False)
+    def update_sweep_progress(self, freq, power):
+        new_data = pd.DataFrame([{'frequency': freq, 'power': power}])
+        self.sweep_data = pd.concat([self.sweep_data, new_data], ignore_index=True)
+        # For performance, only update the plot periodically or at the end
+        if len(self.sweep_data) % 5 == 0 or len(self.sweep_data) < 5:
+             self.update_plot()
+
+    def set_ui_for_sweep(self, is_running):
+        """Enable or disable UI elements based on sweep status."""
+        # Disable all regular input elements first
+        for element in self.ui_elements_to_disable:
+            if element not in [self.btnRunSweep, self.btnAppendSweep, self.btnAppendInterpolatedSweep]:
+                element.setEnabled(not is_running)
+
+        if is_running:
+            # Disable all sweep buttons, then enable and modify the active one
+            for btn in [self.btnRunSweep, self.btnAppendSweep, self.btnAppendInterpolatedSweep]:
+                btn.setEnabled(False)  # Disable first
+                if btn == self.active_sweep_button:
+                    btn.setText("Cancel Sweep")
+                    btn.setStyleSheet("background-color: green; color: white;")
+                    btn.setEnabled(True)  # Re-enable so it can be clicked
+        else:
+            # Restore all buttons to their normal state
+            self.btnRunSweep.setText("Run New Sweep")
+            self.btnAppendSweep.setText("Append Sweep")
+            self.btnAppendInterpolatedSweep.setText("Append Interpolated Sweep")
+
+            for btn in [self.btnRunSweep, self.btnAppendSweep, self.btnAppendInterpolatedSweep]:
+                btn.setStyleSheet("")
+                btn.setEnabled(True)
+            
+            self.active_sweep_button = None
 
     def update_plot(self):
         if self.sweep_data.empty:
