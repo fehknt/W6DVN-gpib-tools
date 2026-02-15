@@ -5,3 +5,4 @@ pyvisa-scratchpad.py
 devices/__pycache__/*
 analysis/__pycache__/*
 config.json
+*.csv

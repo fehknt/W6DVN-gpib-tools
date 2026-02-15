@@ -1,3 +1,4 @@
+import pandas as pd
 import json
 import os
 import numpy as np
@@ -204,10 +205,21 @@ class MainWindow(QMainWindow):
         self.btnSetSGFreq.clicked.connect(self.updateSGFreq)
         hlayout.addWidget(self.btnSetSGFreq)
 
-        # Create button to run sweep
-        self.btnRunSweep = QPushButton("Run Sweep", self)
-        self.btnRunSweep.clicked.connect(self.runSweep)
-        vlayout.addWidget(self.btnRunSweep)
+        # Create a layout for the sweep buttons
+        sweep_button_layout = QHBoxLayout()
+        self.btnRunNewSweep = QPushButton("Run New Sweep", self)
+        self.btnRunNewSweep.clicked.connect(self.run_new_sweep)
+        sweep_button_layout.addWidget(self.btnRunNewSweep)
+
+        self.btnAppendSweep = QPushButton("Append Sweep", self)
+        self.btnAppendSweep.clicked.connect(self.append_sweep)
+        sweep_button_layout.addWidget(self.btnAppendSweep)
+
+        self.btnAppendInterpolatedSweep = QPushButton("Append Interpolated Sweep", self)
+        self.btnAppendInterpolatedSweep.clicked.connect(self.append_interpolated_sweep)
+        sweep_button_layout.addWidget(self.btnAppendInterpolatedSweep)
+        
+        vlayout.addLayout(sweep_button_layout)
 
         # Create log text box
         self.tbLog = QPlainTextEdit()
@@ -222,6 +234,8 @@ class MainWindow(QMainWindow):
         self.sg = None
         self.last_sa_addr = None
         self.last_sg_addr = None
+        self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
+
 
         # Load previous settings and then run initial discovery
         self.load_config()
@@ -420,73 +434,147 @@ class MainWindow(QMainWindow):
         finally:
           self.btnConnectDisconnect.setText("Connect Devices")
   
-    def runSweep(self):
-      try:
-        self.log("Configuring Spectrum Analyzer...")
-        self.log("\t1 - Setting preset mode.")
-        self.sa.set_preset_mode();
-        time.sleep(1);
-        self.log("\t2 - Setting single sweep mode.")
-        self.sa.set_single_sweep_mode();
-        time.sleep(0.5);
-        self.log("\t3 - Setting zero span.")
-        self.sa.set_zero_span();
-        time.sleep(0.5);
-        rbw = parse_frequency(self.cbRBW.currentText());
-        self.log("\t4 - Setting resolution bandwidth to " + str(rbw) + "Hz.")
-        self.sa.set_resolution_bandwidth(rbw);
-        time.sleep(0.5);
+    def run_new_sweep(self):
+        if not self.sweep_data.empty:
+            reply = QMessageBox.question(self, 'Clear Data', 
+                                         "This will clear all existing sweep data. Are you sure?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return # User cancelled
 
-        sgTrackingDisabled = self.cbDisableTracking.checkState() == 2
-        sa_freq_offset = int(self.tbSAFreqOffset.text())
-        self.log("Running sweep...")
-        self.results = []
-
+        self.log("Starting new sweep and clearing existing data.")
+        self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
+        
         start_freq = parse_frequency(self.tbStartFreq.text())
         end_freq = parse_frequency(self.tbStopFreq.text())
         
         if self.tbPoints.text():
-          num_points = int(self.tbPoints.text())
-          frequencies = np.linspace(start_freq, end_freq, num_points)
-          self.log(f"Performing linear sweep with {num_points} points.")
+            num_points = int(self.tbPoints.text())
+            frequencies = np.linspace(start_freq, end_freq, num_points)
+            self.log(f"Generating {num_points} linear points.")
         else:
-          num_points = 1000  # Default for Halton
-          self.log(f"Performing Halton sequence sweep with {num_points} points.")
-          frequencies = [start_freq + (end_freq - start_freq) * halton(i, 2) for i in range(1, num_points + 1)]
-          frequencies.insert(0, start_freq)
-          frequencies.append(end_freq)
+            num_points = 1000  # Default for Halton
+            self.log(f"Generating {num_points} Halton points.")
+            frequencies = [start_freq + (end_freq - start_freq) * halton(i, 2) for i in range(1, num_points + 1)]
+            frequencies.insert(0, start_freq)
+            frequencies.append(end_freq)
+        
+        self._perform_sweep(frequencies)
 
-        # Setup devices
+    def append_sweep(self):
+        self.log("Appending sweep with current settings.")
+        start_freq = parse_frequency(self.tbStartFreq.text())
+        end_freq = parse_frequency(self.tbStopFreq.text())
+        
+        if self.tbPoints.text():
+            num_points = int(self.tbPoints.text())
+            frequencies = np.linspace(start_freq, end_freq, num_points)
+            self.log(f"Generating {num_points} linear points for append.")
+        else:
+            num_points = 1000
+            self.log(f"Generating {num_points} Halton points for append.")
+            frequencies = [start_freq + (end_freq - start_freq) * halton(i, 2) for i in range(1, num_points + 1)]
+        
+        self._perform_sweep(frequencies)
+
+    def append_interpolated_sweep(self):
+        if self.sweep_data.empty or len(self.sweep_data['frequency'].unique()) < 2:
+            self.log("Not enough data to perform interpolated sweep. Run a new sweep first.")
+            return
+
+        self.log("Performing interpolated sweep to fill gaps.")
+        num_points_to_add = int(self.tbPoints.text()) if self.tbPoints.text() else 41
+        
+        unique_freqs = sorted(self.sweep_data['frequency'].unique())
+        gaps = np.diff(unique_freqs)
+        
+        if len(gaps) == 0:
+            self.log("No frequency gaps found to interpolate.")
+            return
+
+        # Cap the number of points to the number of available gaps
+        actual_points_to_add = min(num_points_to_add, len(gaps))
+        self.log(f"Found {len(gaps)} gaps. Will add 1 point in each of the largest {actual_points_to_add} gaps.")
+
+        # Find the indices of the largest gaps
+        gap_indices = np.argsort(gaps)[::-1][:actual_points_to_add]
+
+        new_frequencies = []
+        for i in gap_indices:
+            start_gap = unique_freqs[i]
+            end_gap = unique_freqs[i+1]
+            mid_point = start_gap + (end_gap - start_gap) / 2
+            new_frequencies.append(int(round(mid_point)))
+
+        if not new_frequencies:
+            self.log("No new frequencies generated for interpolation.")
+            return
+            
+        self.log(f"Adding {len(new_frequencies)} points in the largest frequency gaps.")
+        self._perform_sweep(new_frequencies)
+
+    def _perform_sweep(self, frequencies):
+      try:
+        self.log("Configuring Spectrum Analyzer for sweep...")
+        self.sa.set_single_sweep_mode()
+        rbw = parse_frequency(self.cbRBW.currentText())
+        self.sa.set_resolution_bandwidth(rbw)
+        self.sa.set_zero_span()
+
+        sgTrackingDisabled = self.cbDisableTracking.isChecked()
+        sa_freq_offset = int(self.tbSAFreqOffset.text())
+        
         self.sg.set_power(self.tbPower.text())
         self.sg.enable_rf(True)
 
-        # Sweep
-        measured_freqs = []
-        measured_powers = []
-        
+        new_data = []
         sweep_generator = run_sweep(self.sa, self.sg, frequencies, 
                                     sg_tracking_disabled=sgTrackingDisabled, 
                                     sa_freq_offset=sa_freq_offset, 
                                     log_callback=self.log)
 
         for freq, power in sweep_generator:
-            self.results.append((freq, power))
-            
-            # Update plot
-            measured_freqs.append(freq)
-            measured_powers.append(power)
+            new_data.append({'frequency': freq, 'power': power})
 
-            try:
-                self.curve.setData(measured_freqs, measured_powers, pen=pg.mkPen(color='b', width=2))
-                self.scatter.setData(measured_freqs, measured_powers, pen=pg.mkPen(color='b', width=2))
-            except Exception as e:
-                print(f"Error updating plot: {e}")
-
-        self.sg.enable_rf(False)
+        self.sweep_data = pd.concat([self.sweep_data, pd.DataFrame(new_data)], ignore_index=True)
         self.log("Sweep finished.")
+        self.update_plot()
 
       except Exception as e:
         self.log(f"Error running sweep: {e}")
+      finally:
+        if self.sg: self.sg.enable_rf(False)
+
+    def update_plot(self):
+        if self.sweep_data.empty:
+            self.scatter.setData([], [])
+            self.curve.setData([], [])
+            return
+
+        # Raw data for scatter plot
+        raw_freqs = self.sweep_data['frequency'].values
+        raw_powers = self.sweep_data['power'].values
+        
+        # Create a temporary copy for grouping and averaging
+        plot_df = self.sweep_data.copy()
+        
+        # Group by frequency and average for the line plot
+        # Round to nearest 10Hz to group close points
+        plot_df['freq_group'] = (plot_df['frequency'] / 10).round() * 10
+        averaged_data = plot_df.groupby('freq_group')['power'].mean().reset_index()
+        
+        line_freqs = averaged_data['freq_group'].values
+        line_powers = averaged_data['power'].values
+
+        # Sort line data for correct plotting
+        sort_indices = np.argsort(line_freqs)
+        line_freqs = line_freqs[sort_indices]
+        line_powers = line_powers[sort_indices]
+
+        self.log("Updating plot...")
+        self.scatter.setData(raw_freqs, raw_powers)
+        self.curve.setData(line_freqs, line_powers, pen=pg.mkPen(color='b', width=2), symbol=None)
+
 
     def save_config(self):
         """Saves the current UI settings to a config file."""
