@@ -317,13 +317,14 @@ class MainWindow(QMainWindow):
 
         # Create a layout for the sweep buttons
         sweep_button_layout = QHBoxLayout()
-        self.btnRunSweep = QPushButton("Run New Sweep", self)
+        self.btnClearSweepData = QPushButton("Clear Sweep Data", self)
+        self.btnClearSweepData.setStyleSheet("background-color: red; color: white;")
+        self.btnClearSweepData.clicked.connect(self.clear_sweep_data)
+        sweep_button_layout.addWidget(self.btnClearSweepData)
+
+        self.btnRunSweep = QPushButton("Run Sweep", self)
         self.btnRunSweep.clicked.connect(self.handle_sweep_button_click)
         sweep_button_layout.addWidget(self.btnRunSweep)
-
-        self.btnAppendSweep = QPushButton("Append Sweep", self)
-        self.btnAppendSweep.clicked.connect(self.handle_sweep_button_click)
-        sweep_button_layout.addWidget(self.btnAppendSweep)
 
         self.btnContinuousInterpolation = QPushButton("Continuous Interpolation", self)
         self.btnContinuousInterpolation.clicked.connect(self.handle_sweep_button_click)
@@ -356,7 +357,7 @@ class MainWindow(QMainWindow):
             self.tbStartFreq, self.tbStopFreq, self.cbRBW,
             self.tbPoints, self.tbSAFreqOffset, self.tbPower,
             self.cbDisableTracking, self.tbSGFreq, self.btnSetSGFreq,
-            self.btnRunSweep, self.btnAppendSweep, self.btnContinuousInterpolation
+            self.btnClearSweepData, self.btnRunSweep, self.btnContinuousInterpolation
         ]
 
         # Load previous settings and then run initial discovery
@@ -437,6 +438,18 @@ class MainWindow(QMainWindow):
 
     def show_about(self):
         QMessageBox.about(self, "About", "PyQt Menu Bar Example\nCreated with PyQt5.")
+
+    def clear_sweep_data(self):
+        if not self.sweep_data.empty:
+            reply = QMessageBox.question(self, 'Clear Data',
+                                         "This will clear all existing sweep data. Are you sure?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.log("Clearing existing sweep data.")
+                self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
+                self.update_plot()
+        else:
+            self.log("Sweep data is already empty.")
 
     def log(self, message):
         self.tbLog.appendPlainText(datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + "\t" + message)
@@ -573,26 +586,8 @@ class MainWindow(QMainWindow):
 
         try:
             if sender == self.btnRunSweep:
-                sweep_type = "new"
-                if not self.sweep_data.empty:
-                    reply = QMessageBox.question(self, 'Clear Data',
-                                                 "This will clear all existing sweep data. Are you sure?",
-                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                    if reply == QMessageBox.No:
-                        self.active_sweep_button = None # Reset if user cancels
-                        return
-                self.log("Starting new sweep and clearing existing data.")
-                self.sweep_data = pd.DataFrame(columns=['frequency', 'power'])
-                self.update_plot()
-                
-                start_freq = parse_frequency(self.tbStartFreq.text())
-                end_freq = parse_frequency(self.tbStopFreq.text())
-                num_points = int(self.tbPoints.text()) if self.tbPoints.text() else 41
-                frequencies = np.linspace(start_freq, end_freq, num_points)
-
-            elif sender == self.btnAppendSweep:
                 sweep_type = "append"
-                self.log("Appending sweep with current settings.")
+                self.log("Running sweep with current settings.")
                 start_freq = parse_frequency(self.tbStartFreq.text())
                 end_freq = parse_frequency(self.tbStopFreq.text())
                 num_points = int(self.tbPoints.text()) if self.tbPoints.text() else 41
@@ -675,20 +670,18 @@ class MainWindow(QMainWindow):
         else:
             self.sweep_data = pd.concat([self.sweep_data, new_data], ignore_index=True)
         
-        # For performance, only update the plot periodically or at the end
-        if len(self.sweep_data) % 5 == 0 or len(self.sweep_data) < 5:
-             self.update_plot()
+        self.update_plot()
 
     def set_ui_for_sweep(self, is_running):
         """Enable or disable UI elements based on sweep status."""
         # Disable all regular input elements first
         for element in self.ui_elements_to_disable:
-            if element not in [self.btnRunSweep, self.btnAppendSweep, self.btnContinuousInterpolation]:
+            if element not in [self.btnRunSweep, self.btnContinuousInterpolation]:
                 element.setEnabled(not is_running)
 
         if is_running:
             # Disable all sweep buttons, then enable and modify the active one
-            for btn in [self.btnRunSweep, self.btnAppendSweep, self.btnContinuousInterpolation]:
+            for btn in [self.btnRunSweep, self.btnContinuousInterpolation]:
                 btn.setEnabled(False)  # Disable first
                 if btn == self.active_sweep_button:
                     btn.setText("Cancel Sweep")
@@ -696,11 +689,10 @@ class MainWindow(QMainWindow):
                     btn.setEnabled(True)  # Re-enable so it can be clicked
         else:
             # Restore all buttons to their normal state
-            self.btnRunSweep.setText("Run New Sweep")
-            self.btnAppendSweep.setText("Append Sweep")
+            self.btnRunSweep.setText("Run Sweep")
             self.btnContinuousInterpolation.setText("Continuous Interpolation")
 
-            for btn in [self.btnRunSweep, self.btnAppendSweep, self.btnContinuousInterpolation]:
+            for btn in [self.btnRunSweep, self.btnContinuousInterpolation]:
                 btn.setStyleSheet("")
                 btn.setEnabled(True)
             
