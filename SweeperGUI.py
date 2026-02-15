@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         self.lblSpectrumAnalyzer = QLabel("Select Spectrum Analyzer: ", self)
         hlayout3.addWidget(self.lblSpectrumAnalyzer)
         self.cbSpectrumAnalyzer = QComboBox()
-        self.cbSpectrumAnalyzer.addItems(["HP8563A"]);
+        self.cbSpectrumAnalyzer.addItems(["HP8563A", "HP8593EM"]);
         hlayout3.addWidget(self.cbSpectrumAnalyzer)
         self.cbSAAddr = QComboBox()
         hlayout3.addWidget(self.cbSAAddr)
@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
     def discoverDevices(self):
         self.log("Discovering devices...")
         self.rm = pyvisa.ResourceManager()
-        found_devices = [r for r in self.rm.list_resources() if r.startswith("GPIB")]
+        found_devices = [r for r in self.rm.list_resources() if "GPIB" in r]
         self.log("Found GPIB devices: " + str(found_devices));
 
         self.cbSGAddr.clear()
@@ -319,12 +319,32 @@ class MainWindow(QMainWindow):
         self.log("Connecting to devices...");
 
         try:
-          self.sa = HP8563A(self.rm.open_resource(self.cbSAAddr.currentText()))
-          self.sa.set_single_sweep_mode();
-          self.log("Spectrum Analyzer ID: " + self.sa.get_id())
+          if self.cbSpectrumAnalyzer.currentText() == "HP8563A":
+            self.sa = HP8563A(self.rm.open_resource(self.cbSAAddr.currentText()))
+            self.sa.set_single_sweep_mode();
+            self.log("Spectrum Analyzer ID: " + self.sa.get_id())
+            if self.sa.get_id().startswith("8563A"):
+              self.log("Verified connection to HP8563A.")
+            else:
+              self.log("Warning: Connected device does not identify as HP8563A.")
+          elif self.cbSpectrumAnalyzer.currentText() == "HP8593EM":
+            self.sa = HP8593EM(self.rm.open_resource(self.cbSAAddr.currentText()))
+            self.sa.set_single_sweep_mode();
+            self.log("Spectrum Analyzer ID: " + self.sa.get_id())
+            if self.sa.get_id().startswith("8593EM"):
+              self.log("Verified connection to HP8593EM.")
+            else:
+              self.log("Warning: Connected device does not identify as HP8593EM.")
+          else:
+            self.log("Unsupported Spectrum Analyzer selected.")
+            return
 
-          self.sg = HP8673B(self.rm.open_resource(self.cbSGAddr.currentText()))
-          self.log("Signal Generator Init Freq: " + self.sg.get_frequency())
+          if self.cbSignalGenerator.currentText() == "HP8673B":
+            self.sg = HP8673B(self.rm.open_resource(self.cbSGAddr.currentText()))
+            self.log("Signal Generator Init Freq: " + self.sg.get_frequency())
+          else:
+            self.log("Unsupported Signal Generator selected.")
+            return
 
           self.connected = True;
           self.btnConnectDisconnect.setText("Disconnect Devices")
