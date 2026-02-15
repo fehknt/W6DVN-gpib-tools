@@ -1,38 +1,10 @@
-import pyvisa as visa
+from devices.spectrum_analyzer import SpectrumAnalyzer
 import time
+import pyvisa as visa
 
-class HP8593EM:
+class HP8593EM(SpectrumAnalyzer):
     def __init__(self, resource_or_address):
-        if isinstance(resource_or_address, str):
-            rm = visa.ResourceManager()
-            self.instrument = rm.open_resource(resource_or_address)
-        else:
-            self.instrument = resource_or_address
-        
-        self.instrument.timeout = 10000
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-
-    def write(self, command):
-        print(f"GPIB WRITE: {command}")
-        self.instrument.write(command)
-
-    def read(self):
-        response = self.instrument.read()
-        print(f"GPIB READ: {response.strip()}")
-        return response
-
-    def query(self, command):
-        response = self.instrument.query(command)
-        print(f"GPIB QUERY '{command}': {response.strip()}")
-        return response
-
-    def close(self):
-        self.instrument.close()
+        super().__init__(resource_or_address)
 
     def get_id(self):
         return self.query("ID?")
@@ -81,6 +53,39 @@ class HP8593EM:
     def set_reference_level(self, level_dbm):
         self.write(f"RL {level_dbm}DBM")
 
+    def set_preset_mode(self):
+        self.write("*RST")
+
+    def set_single_sweep_mode(self):
+        self.write("CONTSWP OFF")
+
+    def get_marker_power(self):
+        # This is a bit of a hack for the 8593EM.
+        # We read the entire trace and return the first point.
+        # This is slow and inefficient.
+        # A better way might be to use markers, but for now this works.
+        self.write("TDF P")
+        trace_data = self.query("TRA?")
+        power_values = trace_data.split(',')
+        return float(power_values[0])
+
+    def set_sweep_time(self, sweep_time):
+        self.write(f"SWPT {sweep_time}")
+
+    def take_sweep(self):
+        self.write("TS")
+
+    def wait_done(self):
+        self.query("*OPC?")
+
+    @property
+    def has_tracking_generator(self):
+        return True
+
+    @property
+    def has_emc_personality(self):
+        return True
+
     def turn_off_tracking_generator(self):
         """Turns off the tracking generator."""
         self.write("SRCPWR OFF")
@@ -91,12 +96,6 @@ class HP8593EM:
     def set_trace_data_format(self, format_char):
         self.write(f"TDF {format_char}")
 
-    def take_sweep_and_wait(self):
-        """Queries sweep time, initiates a sweep, and waits for it to complete."""
-        sweep_time_s = self.get_sweep_time()
-        self.write("TS")
-        # Wait for sweep to complete, with a small buffer
-        time.sleep(sweep_time_s * 1.1 + 0.1)
 
     def get_sweep_time(self):
         """Queries the instrument for its sweep time."""

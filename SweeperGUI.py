@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QHBo
 from devices.hp8593em import HP8593EM
 from devices.hp8563a import HP8563A
 from devices.hp8673b import HP8673B
+from sweep_utils import parse_frequency, run_sweep, halton
 from visa_utils import discover_and_connect
 
 class MainWindow(QMainWindow):
@@ -321,17 +322,15 @@ class MainWindow(QMainWindow):
         try:
           if self.cbSpectrumAnalyzer.currentText() == "HP8563A":
             self.sa = HP8563A(self.rm.open_resource(self.cbSAAddr.currentText()))
-            self.sa.set_single_sweep_mode();
             self.log("Spectrum Analyzer ID: " + self.sa.get_id())
-            if self.sa.get_id().startswith("8563A"):
+            if "8563A" in self.sa.get_id():
               self.log("Verified connection to HP8563A.")
             else:
               self.log("Warning: Connected device does not identify as HP8563A.")
           elif self.cbSpectrumAnalyzer.currentText() == "HP8593EM":
             self.sa = HP8593EM(self.rm.open_resource(self.cbSAAddr.currentText()))
-            self.sa.set_single_sweep_mode();
             self.log("Spectrum Analyzer ID: " + self.sa.get_id())
-            if self.sa.get_id().startswith("8593EM"):
+            if "8593EM" in self.sa.get_id():
               self.log("Verified connection to HP8593EM.")
             else:
               self.log("Warning: Connected device does not identify as HP8593EM.")
@@ -382,20 +381,14 @@ class MainWindow(QMainWindow):
         self.log("\t4 - Setting resolution bandwidth to " + str(rbw) + "Hz.")
         self.sa.set_resolution_bandwidth(rbw);
         time.sleep(0.5);
-        sweep_time = "50ms";
-        self.log("\t5 - Setting sweep time to " + str(sweep_time))
-        self.sa.set_sweep_time(sweep_time);
-        time.sleep(0.5);
 
-        sgTrackingDisabled = True if self.cbDisableTracking.checkState() == 2 else False;
+        sgTrackingDisabled = self.cbDisableTracking.checkState() == 2
+        sa_freq_offset = int(self.tbSAFreqOffset.text())
         self.log("Running sweep...")
         self.results = []
 
         start_freq = parse_frequency(self.tbStartFreq.text())
         end_freq = parse_frequency(self.tbStopFreq.text())
-        
-        # Set plot limits based on frequency range
-        #ax.set_xlim(start_freq / 1e6, end_freq / 1e6)
         
         if self.tbPoints.text():
           num_points = int(self.tbPoints.text())
@@ -415,60 +408,31 @@ class MainWindow(QMainWindow):
         # Sweep
         measured_freqs = []
         measured_powers = []
-        start_time = time.time()
-        for freq in frequencies:
-          if not sgTrackingDisabled:
-            self.log("Setting SG freq: " + str(freq))
-            self.sg.set_frequency(freq + int(self.tbSAFreqOffset.text()))
-          saFreq = freq + int(self.tbSAFreqOffset.text());
-          self.log(f"Measuring SA (with offset) at {saFreq}Hz...")
-          self.sa.set_center_frequency(saFreq)
+        
+        sweep_generator = run_sweep(self.sa, self.sg, frequencies, 
+                                    sg_tracking_disabled=sgTrackingDisabled, 
+                                    sa_freq_offset=sa_freq_offset, 
+                                    log_callback=self.log)
 
-          self.sa.take_sweep()
-          self.sa.wait_done()
+        for freq, power in sweep_generator:
+            self.results.append((freq, power))
+            
+            # Update plot
+            measured_freqs.append(freq)
+            measured_powers.append(power)
 
-          # Wait for sweep to complete, with a small buffer
-          #time.sleep(sweep_time)
-
-          power = self.sa.get_marker_power()
-          self.results.append((freq, power))
-          self.log(f"  Power: {power:.2f} dBm")
-
-          # Update plot
-          measured_freqs.append(freq)
-          measured_powers.append(power)
-
-          # Plot curve
-          try:
-            self.curve.setData(measured_freqs, measured_powers, pen=pg.mkPen(color='b', width=2))
-            self.scatter.setData(measured_freqs, measured_powers, pen=pg.mkPen(color='b', width=2))
-          except Exception as e:
-            print(f"Error updating plot: {e}")
+            try:
+                self.curve.setData(measured_freqs, measured_powers, pen=pg.mkPen(color='b', width=2))
+                self.scatter.setData(measured_freqs, measured_powers, pen=pg.mkPen(color='b', width=2))
+            except Exception as e:
+                print(f"Error updating plot: {e}")
 
         self.sg.enable_rf(False)
-        stop_time = time.time()
-        self.log("Done running sweep. Sweep took " + str(int(stop_time-start_time)) + " seconds.")
+        self.log("Sweep finished.")
 
-      except:
-        self.log(f"Error running sweep.")
+      except Exception as e:
+        self.log(f"Error running sweep: {e}")
 
-def parse_frequency(freq_str: str) -> float:
-    """Parses a frequency string with units (e.g., '100mhz', '2.4ghz') into Hz."""
-    freq_str = freq_str.lower().strip()
-    multiplier = 1
-    if freq_str.endswith('ghz'):
-        multiplier = 1e9
-        freq_str = freq_str[:-3]
-    elif freq_str.endswith('mhz'):
-        multiplier = 1e6
-        freq_str = freq_str[:-3]
-    elif freq_str.endswith('khz'):
-        multiplier = 1e3
-        freq_str = freq_str[:-3]
-    elif freq_str.endswith('hz'):
-        freq_str = freq_str[:-2]
-    
-    return float(freq_str) * multiplier
 
 def main():
     """

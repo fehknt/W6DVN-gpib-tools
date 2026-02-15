@@ -1,39 +1,14 @@
-import pyvisa
-import numpy as np
-import matplotlib.pyplot as plt
 import csv
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pyvisa
 from devices.hp8593em import HP8593EM
 from devices.hp8673b import HP8673B
+from sweep_utils import halton, parse_frequency, run_sweep
 from visa_utils import discover_and_connect
 
-def parse_frequency(freq_str: str) -> float:
-    """Parses a frequency string with units (e.g., '100mhz', '2.4ghz') into Hz."""
-    freq_str = freq_str.lower().strip()
-    multiplier = 1
-    if freq_str.endswith('ghz'):
-        multiplier = 1e9
-        freq_str = freq_str[:-3]
-    elif freq_str.endswith('mhz'):
-        multiplier = 1e6
-        freq_str = freq_str[:-3]
-    elif freq_str.endswith('khz'):
-        multiplier = 1e3
-        freq_str = freq_str[:-3]
-    elif freq_str.endswith('hz'):
-        freq_str = freq_str[:-2]
-    
-    return float(freq_str) * multiplier
-
-def halton(index, base):
-    """Generator for Halton sequence."""
-    result = 0
-    f = 1
-    i = index
-    while i > 0:
-        f = f / base
-        result = result + f * (i % base)
-        i = int(i / base)
-    return result
 
 def main():
     """
@@ -91,18 +66,12 @@ def main():
         # Sweep
         measured_freqs = []
         measured_powers = []
-        for freq in frequencies:
-            print(f"Measuring at {freq/1e6:.3f} MHz...")
-            sg.set_frequency(freq)
-            sa.set_center_frequency(freq)
-            
-            import time
-            time.sleep(0.1)
+        
+        sweep_generator = run_sweep(sa, sg, frequencies, log_callback=print)
 
-            power = sa.get_marker_power()
+        for freq, power in sweep_generator:
             results.append((freq, power))
-            print(f"  Power: {power:.2f} dBm")
-
+            
             # Update plot
             measured_freqs.append(freq / 1e6)
             measured_powers.append(power)

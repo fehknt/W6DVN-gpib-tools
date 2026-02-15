@@ -71,6 +71,10 @@ def main():
         sa = HP8593EM(GPIB_ADDRESS)
         print(f"Connected to: {sa.get_id()}")
         
+        if not sa.has_tracking_generator:
+            print("Error: This script requires a spectrum analyzer with a tracking generator.")
+            return
+        
         start_freq, end_freq = get_frequency_range()
         
         frequency_ranges = generate_frequency_ranges(start_freq, end_freq)
