@@ -50,7 +50,7 @@ def run_sweep(sa, sg, frequencies, sg_tracking_disabled=False, sa_freq_offset=0,
         if not sg_tracking_disabled:
             log_callback(f"Setting SG freq: {freq}")
             sg.set_frequency(freq + sa_freq_offset)
-            sleep(0.1)  # Small delay to allow SG to settle
+            time.sleep(0.1)  # Small delay to allow SG to settle
         
         sa_freq = freq + sa_freq_offset
         log_callback(f"Measuring SA (with offset) at {sa_freq}Hz...")

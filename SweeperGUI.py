@@ -7,9 +7,9 @@ from datetime import datetime
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QWidget, QPlainTextEdit, QComboBox, QLineEdit, QSizePolicy, QFrame, QCheckBox, QAction, QMessageBox
 from devices.hp8593em import HP8593EM
 from devices.hp8563a import HP8563A
+from device_factory import create_spectrum_analyzer
 from devices.hp8673b import HP8673B
 from sweep_utils import parse_frequency, run_sweep, halton
-from visa_utils import discover_and_connect
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
 
         # Create button to discover devices
         self.btnDiscoverDevices = QPushButton("Refresh Device List", self)
-        self.btnDiscoverDevices.clicked.connect(self.discoverDevices)
+        self.btnDiscoverDevices.clicked.connect(self.auto_connect_devices)
         self.btnDiscoverDevices.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         hlayout.addWidget(self.btnDiscoverDevices)
 
@@ -217,7 +217,7 @@ class MainWindow(QMainWindow):
         self.sg = None
 
         # Run initial discovery
-        self.discoverDevices()
+        self.auto_connect_devices()
 
     def init_menu(self):
         # Create the menu bar
@@ -303,65 +303,104 @@ class MainWindow(QMainWindow):
     def updateSGFreq(self):
         self.sg.set_frequency(self.tbSGFreq.text());
 
-    def discoverDevices(self):
+    def auto_connect_devices(self):
         self.log("Discovering devices...")
         self.rm = pyvisa.ResourceManager()
         found_devices = [r for r in self.rm.list_resources() if "GPIB" in r]
-        self.log("Found GPIB devices: " + str(found_devices));
+        self.log(f"Found GPIB devices: {found_devices}")
 
+        # Clear device lists
         self.cbSGAddr.clear()
         self.cbSAAddr.clear()
         self.cbSGAddr.addItems(found_devices)
         self.cbSAAddr.addItems(found_devices)
-        self.log("Done discovering devices...")
+
+        # Attempt auto-connection if exactly two devices are found
+        if len(found_devices) == 2:
+            self.log("Two devices found, attempting auto-connection...")
+            
+            sa_addr, sg_addr = (found_devices[0], found_devices[1]) if "18" in found_devices[0] else (found_devices[1], found_devices[0])
+            
+            if "18" not in sa_addr:
+                self.log("Could not identify SA by address '18'. Please connect manually.")
+                return
+
+            try:
+                sa_resource = self.rm.open_resource(sa_addr)
+                self.sa = create_spectrum_analyzer(sa_resource, log_callback=self.log)
+
+                if self.sa:
+                    self.log(f"Successfully identified SA: {self.sa.get_id()}")
+                    sg_resource = self.rm.open_resource(sg_addr)
+                    self.sg = HP8673B(sg_resource) # Assume the other is the SG
+                    self.log(f"Auto-connected to SA: {self.sa.get_id()} and assumed SG at {sg_addr}")
+
+                    self.connected = True
+                    self.btnConnectDisconnect.setText("Disconnect Devices")
+                    
+                    # Update UI
+                    self.cbSAAddr.setCurrentText(sa_addr)
+                    self.cbSGAddr.setCurrentText(sg_addr)
+                    sa_model = self.sa.__class__.__name__
+                    self.cbSpectrumAnalyzer.setCurrentText(sa_model)
+                    return
+
+                else:
+                    self.log("Auto-connection failed: Could not identify SA.")
+                    if sa_resource: sa_resource.close()
+
+            except Exception as e:
+                self.log(f"Error during auto-connection: {e}")
+        
+        self.log("Auto-connection not performed. Please select devices manually.")
 
     def connect_disconnect(self):
       if not self.connected:
-        self.log("Connecting to devices...");
-
+        self.log("Connecting to devices manually...");
         try:
-          if self.cbSpectrumAnalyzer.currentText() == "HP8563A":
-            self.sa = HP8563A(self.rm.open_resource(self.cbSAAddr.currentText()))
-            self.log("Spectrum Analyzer ID: " + self.sa.get_id())
-            if "8563A" in self.sa.get_id():
-              self.log("Verified connection to HP8563A.")
-            else:
-              self.log("Warning: Connected device does not identify as HP8563A.")
-          elif self.cbSpectrumAnalyzer.currentText() == "HP8593EM":
-            self.sa = HP8593EM(self.rm.open_resource(self.cbSAAddr.currentText()))
-            self.log("Spectrum Analyzer ID: " + self.sa.get_id())
-            if "8593EM" in self.sa.get_id():
-              self.log("Verified connection to HP8593EM.")
-            else:
-              self.log("Warning: Connected device does not identify as HP8593EM.")
-          else:
-            self.log("Unsupported Spectrum Analyzer selected.")
-            return
+          sa_addr = self.cbSAAddr.currentText()
+          sg_addr = self.cbSGAddr.currentText()
+          
+          if not sa_addr or not sg_addr:
+              self.log("Error: Please select both an SA and SG address.")
+              return
 
+          sa_resource = self.rm.open_resource(sa_addr)
+          self.sa = create_spectrum_analyzer(sa_resource, log_callback=self.log)
+
+          if not self.sa:
+              self.log(f"Error: Could not connect to a supported SA at {sa_addr}")
+              sa_resource.close()
+              return
+
+          # Manual SG connection
+          sg_resource = None
           if self.cbSignalGenerator.currentText() == "HP8673B":
-            self.sg = HP8673B(self.rm.open_resource(self.cbSGAddr.currentText()))
-            self.log("Signal Generator Init Freq: " + self.sg.get_frequency())
+              sg_resource = self.rm.open_resource(sg_addr)
+              self.sg = HP8673B(sg_resource)
           else:
-            self.log("Unsupported Signal Generator selected.")
-            return
-
-          self.connected = True;
+              self.log("Unsupported Signal Generator selected.")
+              self.sa.close()
+              return
+          
+          self.log(f"Connected to SA: {self.sa.get_id()} and SG.")
+          self.connected = True
           self.btnConnectDisconnect.setText("Disconnect Devices")
-        except pyvisa.errors.VisaIOError:
-          self.log("Error connecting to devices.");
+
+        except pyvisa.errors.VisaIOError as e:
+          self.log(f"Error connecting to devices: {e}");
           self.btnConnectDisconnect.setText("Connect Devices")
-          self.connected = False;
+          self.connected = False
 
       else:
         self.log("Disconnecting from devices...")
         try:
-          self.sa.close()
-          self.sg.enable_rf(False)
-          self.sg.close()
-          self.connected = False;
+          if self.sa: self.sa.close()
+          if self.sg: self.sg.enable_rf(False); self.sg.close()
+          self.connected = False
           self.log("Connections closed.")
-        except:
-          self.log("Error closing connections...")
+        except Exception as e:
+          self.log(f"Error closing connections: {e}")
         finally:
           self.btnConnectDisconnect.setText("Connect Devices")
   
