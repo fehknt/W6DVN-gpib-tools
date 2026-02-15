@@ -2,3 +2,5 @@
 /ext_att_compensation.csv
 __pycache__/*
 pyvisa-scratchpad.py
+devices/__pycache__/*
+analysis/__pycache__/*

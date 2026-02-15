@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
         self.lblRBW = QLabel("RBW: ", self)
         hlayout.addWidget(self.lblRBW)
         self.cbRBW = QComboBox()
-        self.cbRBW.addItems(["300Hz", "1kHz", "3kHz", "10kHz", "30kHz", "100kHz", "300kHz", "1MHz", "2MHz"]);
+        self.cbRBW.addItems(["30Hz", "100Hz", "300Hz", "1kHz", "3kHz", "10kHz", "30kHz", "100kHz", "300kHz", "1MHz", "2MHz"]);
         hlayout.addWidget(self.cbRBW)
 
         # Create input text box for points
