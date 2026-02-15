@@ -1,3 +1,5 @@
+import json
+import os
 import numpy as np
 import pyqtgraph as pg
 import pyvisa
@@ -10,6 +12,9 @@ from devices.hp8563a import HP8563A
 from device_factory import create_spectrum_analyzer
 from devices.hp8673b import HP8673B
 from sweep_utils import parse_frequency, run_sweep, halton
+
+CONFIG_FILE = "config.json"
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -110,8 +115,8 @@ class MainWindow(QMainWindow):
 
         # Create a scatter plot with hover enabled
         self.scatter = pg.ScatterPlotItem(
-            x=np.linspace(0,10,10),
-            y=np.linspace(0,10,10),
+            x=[],
+            y=[],
             pen=pg.mkPen(None),
             brush=pg.mkBrush(255, 0, 0, 150),
             size=10,
@@ -122,8 +127,8 @@ class MainWindow(QMainWindow):
         )
 
         # Default plot
-        self.curve = self.plot_widget.plot(np.linspace(0, 10, 10),
-                                           np.linspace(0, 10, 10),
+        self.curve = self.plot_widget.plot([],
+                                           [],
                                            pen=pg.mkPen(color='gray', width=1),
                                            symbol='o',
                                            symbolSize=8,
@@ -215,8 +220,11 @@ class MainWindow(QMainWindow):
         self.rm = None
         self.sa = None
         self.sg = None
+        self.last_sa_addr = None
+        self.last_sg_addr = None
 
-        # Run initial discovery
+        # Load previous settings and then run initial discovery
+        self.load_config()
         self.auto_connect_devices()
 
     def init_menu(self):
@@ -305,15 +313,24 @@ class MainWindow(QMainWindow):
 
     def auto_connect_devices(self):
         self.log("Discovering devices...")
+        if self.connected:
+            self.connect_disconnect() # Disconnect first if already connected
+        
         self.rm = pyvisa.ResourceManager()
         found_devices = [r for r in self.rm.list_resources() if "GPIB" in r]
         self.log(f"Found GPIB devices: {found_devices}")
 
-        # Clear device lists
+        # Populate device lists
         self.cbSGAddr.clear()
         self.cbSAAddr.clear()
         self.cbSGAddr.addItems(found_devices)
         self.cbSAAddr.addItems(found_devices)
+
+        # Restore last used addresses if they are present
+        if self.last_sa_addr and self.last_sa_addr in found_devices:
+            self.cbSAAddr.setCurrentText(self.last_sa_addr)
+        if self.last_sg_addr and self.last_sg_addr in found_devices:
+            self.cbSGAddr.setCurrentText(self.last_sg_addr)
 
         # Attempt auto-connection if exactly two devices are found
         if len(found_devices) == 2:
@@ -330,7 +347,6 @@ class MainWindow(QMainWindow):
                 self.sa = create_spectrum_analyzer(sa_resource, log_callback=self.log)
 
                 if self.sa:
-                    self.log(f"Successfully identified SA: {self.sa.get_id()}")
                     sg_resource = self.rm.open_resource(sg_addr)
                     self.sg = HP8673B(sg_resource) # Assume the other is the SG
                     self.log(f"Auto-connected to SA: {self.sa.get_id()} and assumed SG at {sg_addr}")
@@ -471,6 +487,59 @@ class MainWindow(QMainWindow):
 
       except Exception as e:
         self.log(f"Error running sweep: {e}")
+
+    def save_config(self):
+        """Saves the current UI settings to a config file."""
+        config = {
+            "start_freq": self.tbStartFreq.text(),
+            "stop_freq": self.tbStopFreq.text(),
+            "rbw": self.cbRBW.currentText(),
+            "points": self.tbPoints.text(),
+            "sa_freq_offset": self.tbSAFreqOffset.text(),
+            "power": self.tbPower.text(),
+            "sg_tracking_disabled": self.cbDisableTracking.isChecked(),
+            "sg_manual_freq": self.tbSGFreq.text(),
+            "sa_address": self.cbSAAddr.currentText(),
+            "sg_address": self.cbSGAddr.currentText()
+        }
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=4)
+            self.log("Configuration saved.")
+        except Exception as e:
+            self.log(f"Error saving configuration: {e}")
+
+    def load_config(self):
+        """Loads UI settings from a config file."""
+        if not os.path.exists(CONFIG_FILE):
+            self.log("No config file found.")
+            return
+        
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            
+            self.tbStartFreq.setText(config.get("start_freq", ""))
+            self.tbStopFreq.setText(config.get("stop_freq", ""))
+            self.cbRBW.setCurrentText(config.get("rbw", "30Hz"))
+            self.tbPoints.setText(config.get("points", "41"))
+            self.tbSAFreqOffset.setText(config.get("sa_freq_offset", "0"))
+            self.tbPower.setText(config.get("power", "-40"))
+            self.cbDisableTracking.setChecked(config.get("sg_tracking_disabled", False))
+            self.tbSGFreq.setText(config.get("sg_manual_freq", ""))
+            
+            # Store addresses to be used after device discovery
+            self.last_sa_addr = config.get("sa_address", "")
+            self.last_sg_addr = config.get("sg_address", "")
+
+            self.log("Configuration loaded.")
+        except Exception as e:
+            self.log(f"Error loading configuration: {e}")
+
+    def closeEvent(self, event):
+        """Handle the window's close event."""
+        self.save_config()
+        super().closeEvent(event)
 
 
 def main():
