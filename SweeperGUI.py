@@ -345,6 +345,14 @@ class MainWindow(QMainWindow):
             "sa_address": self.cbSAAddr.currentText(),
             "sg_address": self.cbSGAddr.currentText()
         }
+        # Save window geometry
+        geometry = self.geometry()
+        config["window_geometry"] = {
+            "x": geometry.x(),
+            "y": geometry.y(),
+            "width": geometry.width(),
+            "height": geometry.height()
+        }
         self.sweep_model.save_config(config)
 
     def load_config(self):
@@ -359,6 +367,16 @@ class MainWindow(QMainWindow):
         self.tbSGFreq.setText(config.get("sg_manual_freq", ""))
         self.last_sa_addr = config.get("sa_address", "")
         self.last_sg_addr = config.get("sg_address", "")
+        
+        # Load window geometry
+        geometry_data = config.get("window_geometry")
+        if geometry_data:
+            x = geometry_data.get("x")
+            y = geometry_data.get("y")
+            width = geometry_data.get("width")
+            height = geometry_data.get("height")
+            if all(v is not None for v in [x, y, width, height]): # Ensure all values are present
+                self.setGeometry(x, y, width, height)
     
     def show_alignment(self):
         QMessageBox.about(self, "Alignment Procedure", "Unless SA and SG share a common oscillator, their frequencies will not match exactly and very likely will result in data that is garbage for sweeps with low RBW.\nWe can compensate for this mismatch in software by finding the difference between SA and SG frequencies and using this value to offset the SA frequency relative to the SG frequency.\n\nSteps:\n1) Connect devices.\n2) Disable SG tracking.\n3) Manually set SG to the center frequency of your desired sweep.\n\t*Note that the frequency must be set to something evenly divisible by your SG's smallest frequency step. (Ex. HP8673B has 4kHz steps so center freq should be divisible by 4kHz.\n4) Set start/stop frequencies to be just a bit wider than the anticipated frequency offset. +/-8kHz may be good to start with and adjust accordingly.\n5) Set number of sweep points. This will also vary case-by-base, but 40-60 points is usually good.\n6) Set RBW. Typically, #Points=(SweepRange/RBW)\n7) Perform sweep.\n8) Determine where the signal peak is and calculate the difference between the expected frequency and the measured frequency.\n9) Enter this value in the Analyzer Freq Offset box.")
