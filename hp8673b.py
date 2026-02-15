@@ -13,14 +13,14 @@ class HP8673B:
     def close(self):
         self.resource.close()
 
-    def identity(self):
-        return self.resource.query("ID?").strip()
-
     def set_frequency(self, frequency_hz):
-        self.resource.write(f"CW {int(frequency_hz)} HZ")
+        self.resource.write(f"CW{int(frequency_hz)}HZ")
+
+    def get_frequency(self):
+        return self.resource.query(f"CW?")
 
     def set_power(self, power_dbm):
-        self.resource.write(f"PL {float(power_dbm):.2f} DB")
+        self.resource.write(f"PL{int(power_dbm)}DB")
 
     def enable_rf(self, enabled: bool):
         if enabled:

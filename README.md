@@ -3,6 +3,22 @@ Simple script to interface with an HP8953EM spectrum analyzer to perform semi-au
 It should be pretty easy to modify for other devices, though it leans pretty heavily on the auto-measure function which detects peaks, then zero-spans on each detected peak to get a more accurate measurement. 
 Really overkill for my purposes, but it's the SA I've got, so I may as well use it!
 
+Requirements:
+At least Python3.14.2
+
+Initial Setup:
+1) Create Python virtual environment
+  $ python3 -m venv .venv
+2) Activate environment
+  macOS/Linux (Bash/Zsh):
+    $ source .venv/Scripts/activate
+  Windows (Command Prompt):
+    $ .venv\Scripts\activate.bat
+  Windows (PowerShell):
+    $ .venv\Scripts\Activate.ps1
+3) Install required packages
+  $ pip install -r requirements.txt
+
 To use:
 0. Ensure your SA is accessible on GPIB address 18, (or adjust the code to your address).
 1. Run the script, let it send the initial setup commands.
